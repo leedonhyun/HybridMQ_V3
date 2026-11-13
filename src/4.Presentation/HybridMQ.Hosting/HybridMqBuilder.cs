@@ -54,33 +54,40 @@ public sealed class HybridMqOptions
     public string? AdvertisedEndpoint { get; set; }
     public IReadOnlyList<string> SeedPeers { get; set; } = [];
     public TimeSpan HeartbeatTimeout { get; set; } = TimeSpan.FromSeconds(5);
+    public TimeSpan PartitionLeaseTtl { get; set; } = TimeSpan.FromSeconds(10);
 }
 
 public sealed class HybridMqRuntimeHost : IAsyncDisposable
 {
     private readonly CancellationTokenSource? _clusterCts;
     private readonly Task? _clusterGossipTask;
+    private readonly TcpTransportChannel? _peerTransport;
 
     public BrokerEngine Engine { get; }
     public IHybridMqInstance Client { get; }
-    public ClusterMembershipManager? Membership { get; }
+    public ClusterMembershipManager Membership { get; }
+    public PartitionLeaseCoordinator LeaseCoordinator { get; }
     public TcpBrokerServer? TcpServer { get; }
     public LocalNamedPipeServer? PipeServer { get; }
 
     public HybridMqRuntimeHost(
         BrokerEngine engine,
         IHybridMqInstance client,
-        ClusterMembershipManager? membership = null,
+        ClusterMembershipManager membership,
+        PartitionLeaseCoordinator leaseCoordinator,
         TcpBrokerServer? tcpServer = null,
         LocalNamedPipeServer? pipeServer = null,
+        TcpTransportChannel? peerTransport = null,
         CancellationTokenSource? clusterCts = null,
         Task? clusterGossipTask = null)
     {
         Engine = engine;
         Client = client;
         Membership = membership;
+        LeaseCoordinator = leaseCoordinator;
         TcpServer = tcpServer;
         PipeServer = pipeServer;
+        _peerTransport = peerTransport;
         _clusterCts = clusterCts;
         _clusterGossipTask = clusterGossipTask;
     }
@@ -100,8 +107,12 @@ public sealed class HybridMqRuntimeHost : IAsyncDisposable
         await Client.DisposeAsync().ConfigureAwait(false);
         if (TcpServer is not null) await TcpServer.DisposeAsync().ConfigureAwait(false);
         if (PipeServer is not null) await PipeServer.DisposeAsync().ConfigureAwait(false);
+        if (_peerTransport is not null) await _peerTransport.DisposeAsync().ConfigureAwait(false);
+
+        // 리스 반납 -> 엔진 종료 -> 멤버십 종료 순서로 안전하게 정리
+        await LeaseCoordinator.DisposeAsync().ConfigureAwait(false);
         await Engine.DisposeAsync().ConfigureAwait(false);
-        if (Membership is not null) await Membership.DisposeAsync().ConfigureAwait(false);
+        await Membership.DisposeAsync().ConfigureAwait(false);
     }
 }
 
@@ -139,42 +150,61 @@ public static class HybridMqFactory
         string initialEndpoint = opts.AdvertisedEndpoint
             ?? (opts.TcpListenEndPoint is not null ? $"127.0.0.1:{opts.TcpListenEndPoint.Port}" : "127.0.0.1:5679");
 
+        // 1. 멤버십 매니저 생성 및 자체 등록 (MonitorPeersAsync 백그라운드 감시 루프 시작)
         var membership = new ClusterMembershipManager(opts.NodeId, initialEndpoint, opts.HeartbeatTimeout);
+        await membership.RegisterSelfAsync(ct).ConfigureAwait(false);
+
+        // 2. 브로커 엔진 및 파티션 리스 코디네이터 초기화
         var engine = new BrokerEngine(opts.NodeId, storage, budget, membership);
         await engine.StartAsync(ct).ConfigureAwait(false);
 
-        var dispatcher = new BrokerRpcDispatcher(engine);
+        var leaseCoordinator = new PartitionLeaseCoordinator(opts.NodeId, storage, engine, opts.PartitionLeaseTtl);
+        leaseCoordinator.Start();
+
+        // 피어 장애 감지 시 죽은 노드가 쥐고 있던 파티션 리스 재획득(Rebalance) 시도
+        //membership.OnPeerDied += _ => _ =  leaseCoordinator.RebalancePartitionsAsync();
+        membership.OnPeerDied += deadPeer =>
+        {
+            _ = Task.Run(() => leaseCoordinator.RebalancePartitionsAsync().AsTask());
+        };
+        // 3. 피어 간 RPC 포워딩용 채널 및 ClusterRpcRouter 구성
+        var peerTransport = new TcpTransportChannel();
+        var localDispatcher = new BrokerRpcDispatcher(engine);
+        var clusterRouter = new ClusterRpcRouter(opts.NodeId, localDispatcher, leaseCoordinator, peerTransport);
+
         async ValueTask<ReadOnlyMemory<byte>> HandleRpcBytes(ReadOnlyMemory<byte> reqBytes, CancellationToken token)
         {
             var req = JsonSerializer.Deserialize(reqBytes.Span, BrokerProtocolJsonContext.Default.BrokerRpcRequest)!;
 
-            // 클러스터 노드 간 Ping(Heartbeat) 처리:
-            // req.Topic = 발신자 NodeId, req.Group = 발신자 Endpoint
+            // 피어 노드 간 Ping(Heartbeat) 수신 시 멤버십 갱신 + peerTransport 라우팅 테이블 등록
             if (req.Command == BrokerCommandType.Ping && !string.IsNullOrEmpty(req.Group))
             {
                 var senderId = new NodeId(req.Topic ?? "unknown-node");
                 membership.RecordHeartbeat(senderId, req.Group);
 
-                // Success=true 응답의 Error 필드에 자신의 NodeId를 실어 회신
+                if (IPEndPoint.TryParse(req.Group, out var senderEp))
+                    peerTransport.RegisterNodeEndpoint(senderId, senderEp);
+
                 var respPayload = new BrokerRpcResponse(req.CorrelationId, true, Error: opts.NodeId.Value);
                 return JsonSerializer.SerializeToUtf8Bytes(respPayload, BrokerProtocolJsonContext.Default.BrokerRpcResponse);
             }
 
-            var resp = await dispatcher.DispatchAsync(req, token).ConfigureAwait(false);
+            // 일반 요청은 ClusterRpcRouter를 통해 파티션 리더 노드로 자동 라우팅(또는 로컬 처리)
+            var resp = await clusterRouter.RouteAndDispatchAsync(req, token).ConfigureAwait(false);
             return JsonSerializer.SerializeToUtf8Bytes(resp, BrokerProtocolJsonContext.Default.BrokerRpcResponse);
         }
 
         switch (opts.TransportType)
         {
             case TransportBackendType.EmbeddedDirect:
-                return new HybridMqRuntimeHost(engine, new EmbeddedHybridMqInstance(engine), membership);
+                return new HybridMqRuntimeHost(engine, new EmbeddedHybridMqInstance(engine), membership, leaseCoordinator, peerTransport: peerTransport);
 
             case TransportBackendType.LocalInMemory:
                 {
                     var bus = new LocalInMemoryTransportBus();
                     bus.RegisterEndpoint(opts.NodeId, (_, frame, token) => HandleRpcBytes(frame, token));
                     var channel = new LocalTransportChannel(NodeId.NewId(), bus);
-                    return new HybridMqRuntimeHost(engine, new RemoteHybridMqInstance(channel, opts.NodeId), membership);
+                    return new HybridMqRuntimeHost(engine, new RemoteHybridMqInstance(channel, opts.NodeId), membership, leaseCoordinator, peerTransport: peerTransport);
                 }
 
             case TransportBackendType.LocalNamedPipe:
@@ -182,7 +212,7 @@ public static class HybridMqFactory
                     var pipeServer = new LocalNamedPipeServer(opts.LocalPipePrefix, opts.NodeId, HandleRpcBytes);
                     pipeServer.Start();
                     var channel = new LocalTransportChannel(NodeId.NewId(), opts.LocalPipePrefix);
-                    return new HybridMqRuntimeHost(engine, new RemoteHybridMqInstance(channel, opts.NodeId), membership, pipeServer: pipeServer);
+                    return new HybridMqRuntimeHost(engine, new RemoteHybridMqInstance(channel, opts.NodeId), membership, leaseCoordinator, pipeServer: pipeServer, peerTransport: peerTransport);
                 }
 
             case TransportBackendType.Tcp:
@@ -206,6 +236,7 @@ public static class HybridMqFactory
                         clusterCts = new CancellationTokenSource();
                         clusterGossipTask = RunClusterHeartbeatLoopAsync(
                             membership,
+                            peerTransport,
                             opts.NodeId,
                             actualAdvertised,
                             opts.SeedPeers,
@@ -216,7 +247,9 @@ public static class HybridMqFactory
                         engine,
                         new RemoteHybridMqInstance(channel, opts.NodeId),
                         membership,
+                        leaseCoordinator,
                         tcpServer: tcpServer,
+                        peerTransport: peerTransport,
                         clusterCts: clusterCts,
                         clusterGossipTask: clusterGossipTask);
                 }
@@ -228,12 +261,13 @@ public static class HybridMqFactory
 
     private static async Task RunClusterHeartbeatLoopAsync(
         ClusterMembershipManager membership,
+        TcpTransportChannel peerTransport,
         NodeId localNodeId,
         string localAdvertisedEndpoint,
         IReadOnlyList<string> seedPeers,
         CancellationToken ct)
     {
-        var peerChannel = new TcpTransportChannel();
+        var probeChannel = new TcpTransportChannel();
         var knownEndpoints = new HashSet<string>(seedPeers);
 
         while (!ct.IsCancellationRequested)
@@ -252,8 +286,8 @@ public static class HybridMqFactory
                 {
                     if (!IPEndPoint.TryParse(epStr, out var remoteEp)) continue;
 
-                    var tempPeerKey = new NodeId($"peer-{epStr}");
-                    peerChannel.RegisterNodeEndpoint(tempPeerKey, remoteEp);
+                    var tempPeerKey = new NodeId($"probe-{epStr}");
+                    probeChannel.RegisterNodeEndpoint(tempPeerKey, remoteEp);
 
                     var pingReq = new BrokerRpcRequest(
                         CorrelationId: Guid.NewGuid().ToString("N"),
@@ -262,12 +296,16 @@ public static class HybridMqFactory
                         Group: localAdvertisedEndpoint);
 
                     byte[] reqBytes = JsonSerializer.SerializeToUtf8Bytes(pingReq, BrokerProtocolJsonContext.Default.BrokerRpcRequest);
-                    var respBytes = await peerChannel.RequestAsync(tempPeerKey, reqBytes, ct).ConfigureAwait(false);
+                    var respBytes = await probeChannel.RequestAsync(tempPeerKey, reqBytes, ct).ConfigureAwait(false);
                     var resp = JsonSerializer.Deserialize(respBytes.Span, BrokerProtocolJsonContext.Default.BrokerRpcResponse);
 
                     if (resp is { Success: true } && !string.IsNullOrEmpty(resp.Error))
                     {
-                        membership.RecordHeartbeat(new NodeId(resp.Error), epStr);
+                        var remoteNodeId = new NodeId(resp.Error);
+                        membership.RecordHeartbeat(remoteNodeId, epStr);
+
+                        // ClusterRpcRouter가 lease.Owner(remoteNodeId)로 즉시 포워딩할 수 있도록 엔드포인트 매핑 등록
+                        peerTransport.RegisterNodeEndpoint(remoteNodeId, remoteEp);
                     }
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -276,7 +314,7 @@ public static class HybridMqFactory
                 }
                 catch
                 {
-                    // 상대 노드 다운 또는 아직 기동 전 -> 무시 (타임아웃 시 EvaluatePeerHealth가 Dead 처리)
+                    // 상대 노드 다운 또는 아직 기동 전 -> 무시 (MonitorPeersAsync가 타임아웃 시 Dead 처리)
                 }
             }
 
@@ -290,7 +328,7 @@ public static class HybridMqFactory
             }
         }
 
-        await peerChannel.DisposeAsync().ConfigureAwait(false);
+        await probeChannel.DisposeAsync().ConfigureAwait(false);
     }
 
     public static IHybridMqInstance ConnectRemoteTcp(IPEndPoint remoteEndPoint, NodeId? targetNodeId = null)
