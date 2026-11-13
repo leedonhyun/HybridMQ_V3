@@ -12,7 +12,7 @@ public class BinaryRecordCodecTests
     [Fact]
     public void Encode_And_Decode_RoundTrip_Preserves_All_Fields()
     {
-        var original = new Record(
+        var original = new Domain.Messaging.Record(
             Offset.Invalid,
             DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             123456789L,
@@ -44,7 +44,7 @@ public class BinaryRecordCodecTests
     [Fact]
     public void BitFlip_In_Payload_Throws_DataCorruptionException()
     {
-        var original = new Record(Offset.Invalid, 1000, 1, 1, RecordFlags.None, ReadOnlyMemory<byte>.Empty, Array.Empty<MessageHeader>(), new byte[] { 10, 20, 30 });
+        var original = new Domain.Messaging.Record(Offset.Invalid, 1000, 1, 1, RecordFlags.None, ReadOnlyMemory<byte>.Empty, Array.Empty<MessageHeader>(), new byte[] { 10, 20, 30 });
         var encoded = BinaryRecordCodec.Encode(original, new Offset(0));
 
         // Flip 1 bit in payload
@@ -57,7 +57,7 @@ public class BinaryRecordCodecTests
     [Fact]
     public void Partial_Frame_Returns_False_Without_Throwing()
     {
-        var original = new Record(Offset.Invalid, 1000, 1, 1, RecordFlags.None, ReadOnlyMemory<byte>.Empty, Array.Empty<MessageHeader>(), new byte[] { 10, 20, 30 });
+        var original = new Domain.Messaging.Record(Offset.Invalid, 1000, 1, 1, RecordFlags.None, ReadOnlyMemory<byte>.Empty, Array.Empty<MessageHeader>(), new byte[] { 10, 20, 30 });
         var encoded = BinaryRecordCodec.Encode(original, new Offset(0));
 
         BinaryRecordCodec.TryDecode(encoded.AsSpan(0, encoded.Length - 2), out var decoded, out var consumed).Should().BeFalse();

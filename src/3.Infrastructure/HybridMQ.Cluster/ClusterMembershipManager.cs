@@ -1,6 +1,7 @@
 namespace HybridMQ.Cluster;
 
 using System.Collections.Concurrent;
+
 using HybridMQ.Domain.Ports;
 using HybridMQ.Domain.Primitives;
 
@@ -26,7 +27,7 @@ public sealed class ClusterMembershipManager : IPeerMembershipProvider
 
     public event Action<NodeId>? OnPeerDied;
     public event Action<NodeId>? OnPeerJoined;
-
+    private int _disposed; // 추가: 중복 Dispose 방지 플래그
     public ClusterMembershipManager(
         NodeId localNodeId,
         string localEndpoint = "127.0.0.1:5679",
@@ -116,7 +117,7 @@ public sealed class ClusterMembershipManager : IPeerMembershipProvider
         {
             try
             {
-                await Task.Delay(interval, _cts.Token).ConfigureAwait(false);
+                await Task.Delay(interval, _timeProvider, _cts.Token).ConfigureAwait(false);
                 EvaluatePeerHealth();
             }
             catch (OperationCanceledException)
@@ -128,6 +129,16 @@ public sealed class ClusterMembershipManager : IPeerMembershipProvider
 
     public async ValueTask DisposeAsync()
     {
+        //await _cts.CancelAsync().ConfigureAwait(false);
+        //if (_monitorLoop is not null)
+        //{
+        //    try { await _monitorLoop.ConfigureAwait(false); } catch (OperationCanceledException) { }
+        //}
+        //_cts.Dispose();
+
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
         await _cts.CancelAsync().ConfigureAwait(false);
         if (_monitorLoop is not null)
         {

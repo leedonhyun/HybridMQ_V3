@@ -22,7 +22,7 @@ public sealed class BrokerEngine : IAsyncDisposable
     private readonly IdempotencyWindow _producerDedup = new();
     private readonly ConcurrentDictionary<SubscriptionId, SubscriptionState> _subStates = new();
     private readonly ConcurrentDictionary<PartitionId, FencingToken> _ownedPartitions = new();
-
+    private readonly ConcurrentDictionary<PartitionId, SemaphoreSlim> _ownershipLocks = new();
     public NodeId NodeId { get; }
 
     public BrokerEngine(
@@ -332,17 +332,42 @@ public sealed class BrokerEngine : IAsyncDisposable
 
     private async ValueTask<FencingToken> EnsurePartitionOwnershipAsync(PartitionId partitionId, CancellationToken ct)
     {
+        //if (_ownedPartitions.TryGetValue(partitionId, out var token))
+        //    return token;
+
+        //await _faultHooks.BeforeOwnershipTakeoverAsync(partitionId.ToString(), ct).ConfigureAwait(false);
+        //var lease = await _storage.TryAcquireLeaseAsync(partitionId, NodeId, TimeSpan.FromSeconds(10), ct).ConfigureAwait(false);
+        //if (!lease.Acquired)
+        //    throw new InvalidOperationException($"Partition {partitionId} is currently owned by node {lease.Owner}.");
+
+        //await _storage.RecoverAndTruncateCorruptTailAsync(partitionId, ct).ConfigureAwait(false);
+        //_ownedPartitions[partitionId] = lease.Token;
+        //return lease.Token;
+
         if (_ownedPartitions.TryGetValue(partitionId, out var token))
             return token;
 
-        await _faultHooks.BeforeOwnershipTakeoverAsync(partitionId.ToString(), ct).ConfigureAwait(false);
-        var lease = await _storage.TryAcquireLeaseAsync(partitionId, NodeId, TimeSpan.FromSeconds(10), ct).ConfigureAwait(false);
-        if (!lease.Acquired)
-            throw new InvalidOperationException($"Partition {partitionId} is currently owned by node {lease.Owner}.");
+        var gate = _ownershipLocks.GetOrAdd(partitionId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            // Double-checked locking: 대기 후 이미 다른 스레드가 소유권을 확보했으면 즉시 반환
+            if (_ownedPartitions.TryGetValue(partitionId, out token))
+                return token;
 
-        await _storage.RecoverAndTruncateCorruptTailAsync(partitionId, ct).ConfigureAwait(false);
-        _ownedPartitions[partitionId] = lease.Token;
-        return lease.Token;
+            await _faultHooks.BeforeOwnershipTakeoverAsync(partitionId.ToString(), ct).ConfigureAwait(false);
+            var lease = await _storage.TryAcquireLeaseAsync(partitionId, NodeId, TimeSpan.FromSeconds(10), ct).ConfigureAwait(false);
+            if (!lease.Acquired)
+                throw new InvalidOperationException($"Partition {partitionId} is currently owned by node {lease.Owner}.");
+
+            await _storage.RecoverAndTruncateCorruptTailAsync(partitionId, ct).ConfigureAwait(false);
+            _ownedPartitions[partitionId] = lease.Token;
+            return lease.Token;
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
 
     private void HandlePeerDied(NodeId deadNode)

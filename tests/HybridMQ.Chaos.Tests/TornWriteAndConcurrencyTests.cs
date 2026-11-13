@@ -24,7 +24,7 @@ public sealed class TornWriteAndConcurrencyTests
             await storage.CreateTopicAsync(new TopicMetadata(new TopicName("events"), 1, new RetentionPolicy(), 0));
 
             var pid = new PartitionId(new TopicName("events"), 0);
-            var rec = new Record(Offset.Invalid, 1000, 1, 1, RecordFlags.None, ReadOnlyMemory<byte>.Empty, Array.Empty<MessageHeader>(), new byte[] { 1, 2, 3, 4 });
+            var rec = new Domain.Messaging.Record(Offset.Invalid, 1000, 1, 1, RecordFlags.None, ReadOnlyMemory<byte>.Empty, Array.Empty<MessageHeader>(), new byte[] { 1, 2, 3, 4 });
             await storage.AppendAsync(pid, new[] { rec }, Durability.DiskSync);
 
             string segPath = Path.Combine(tempDir, "topics", "events", "0", "00000000000000000000.log");
@@ -36,7 +36,7 @@ public sealed class TornWriteAndConcurrencyTests
             int truncated = await storage.RecoverAndTruncateCorruptTailAsync(pid);
             truncated.Should().Be(5);
 
-            var recovered = new List<Record>();
+            var recovered = new List<Domain.Messaging.Record>();
             await foreach (var r in storage.ReadAsync(pid, Offset.Earliest, 10))
                 recovered.Add(r);
 
@@ -124,7 +124,7 @@ public sealed class TornWriteAndConcurrencyTests
             var hwm = await storage.GetHighWatermarkAsync(pid);
             hwm.Value.Should().Be(publisherCount * messagesPerPublisher);
 
-            var all = new List<Record>();
+            var all = new List<Domain.Messaging.Record>();
             await foreach (var rec in storage.ReadAsync(pid, Offset.Earliest, 500))
                 all.Add(rec);
 

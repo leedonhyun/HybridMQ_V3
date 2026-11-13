@@ -156,7 +156,7 @@ public sealed class BrokerEngineTests : IAsyncDisposable
 
         await _engine.NackAsync(subId, secondPoll[0].Offset, new RetryPolicy(MaxAttempts: 1), "WorkerCrash");
 
-        var dlqRecords = new List<Record>();
+        var dlqRecords = new List<Domain.Messaging.Record>();
         await foreach (var rec in _client.Consumer.ReadStreamAsync("tasks.workers.dlq", 0, Offset.Earliest))
             dlqRecords.Add(rec);
 

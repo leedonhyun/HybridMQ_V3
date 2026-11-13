@@ -1,8 +1,13 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <OutputType>Exe</OutputType>
   </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="FluentAssertions" />
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/1.Domain/HybridMQ.Domain/HybridMQ.Domain.csproj" />
     <ProjectReference Include="../../src/2.Application/HybridMQ.Engine/HybridMQ.Engine.csproj" />

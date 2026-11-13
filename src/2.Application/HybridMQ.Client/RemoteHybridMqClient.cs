@@ -3,6 +3,7 @@ namespace HybridMQ.Client;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+
 using HybridMQ.Client.Abstractions;
 using HybridMQ.Client.Serialization;
 using HybridMQ.Domain.Messaging;
@@ -149,6 +150,9 @@ public sealed class RemoteHybridMqInstance : IHybridMqInstance, IProducer, ICons
 
                 foreach (var dto in records)
                 {
+                    if (cts.Token.IsCancellationRequested)
+                        break;
+
                     var rec = ToRecord(dto);
                     var ctx = new RemoteMessageContext(this, topic, group, options.Partition, options.MaxAttempts, rec);
                     try
@@ -156,12 +160,12 @@ public sealed class RemoteHybridMqInstance : IHybridMqInstance, IProducer, ICons
                         var obj = _serializer.Deserialize(rec.Payload, typeInfo)!;
                         await handler(ctx, obj).ConfigureAwait(false);
                         if (!ctx.IsSettled)
-                            await ctx.AckAsync(cts.Token).ConfigureAwait(false);
+                            await ctx.AckAsync(CancellationToken.None).ConfigureAwait(false);
                     }
                     catch (Exception ex) when (!cts.Token.IsCancellationRequested)
                     {
                         if (!ctx.IsSettled)
-                            await ctx.NackAsync(reason: ex.Message, ct: cts.Token).ConfigureAwait(false);
+                            await ctx.NackAsync(reason: ex.Message, ct: CancellationToken.None).ConfigureAwait(false);
                     }
                 }
             }
@@ -220,10 +224,24 @@ public sealed class RemoteHybridMqInstance : IHybridMqInstance, IProducer, ICons
 
     private sealed class RemoteSubHandle(CancellationTokenSource cts, Task worker) : IAsyncDisposable
     {
+        //public async ValueTask DisposeAsync()
+        //{
+        //    await cts.CancelAsync().ConfigureAwait(false);
+        //    try { await worker.ConfigureAwait(false); } catch (OperationCanceledException) { }
+        //    cts.Dispose();
+
+
+        //}
+
         public async ValueTask DisposeAsync()
         {
             await cts.CancelAsync().ConfigureAwait(false);
-            try { await worker.ConfigureAwait(false); } catch (OperationCanceledException) { }
+            try
+            {
+                await worker.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) { }
+            catch (InvalidOperationException) when (cts.IsCancellationRequested) { }
             cts.Dispose();
         }
     }

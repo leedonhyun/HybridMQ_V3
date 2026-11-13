@@ -24,7 +24,7 @@ public sealed class FileStorageProvider : IStorageProvider
     private readonly ConcurrentDictionary<PartitionId, SemaphoreSlim> _writeLocks = new();
     private readonly ConcurrentDictionary<SubscriptionId, SemaphoreSlim> _stateLocks = new();
     private readonly List<BindingRule> _bindings = new();
-
+    private readonly object _leaseSync = new();
     public FileStorageProvider(string dataDir)
     {
         _dataDir = Path.GetFullPath(dataDir);
@@ -287,21 +287,41 @@ public sealed class FileStorageProvider : IStorageProvider
 
     public ValueTask<LeaseResult> TryAcquireLeaseAsync(PartitionId partition, NodeId node, TimeSpan ttl, CancellationToken ct = default)
     {
-        string lockPath = Path.Combine(_dataDir, "locks", "partitions", $"{partition.Topic.Value}-{partition.Partition}.lock");
-        if (_partitionLocks.ContainsKey(partition))
-        {
-            return ValueTask.FromResult(new LeaseResult(true, node, new FencingToken(1), DateTimeOffset.UtcNow.Add(ttl).ToUnixTimeMilliseconds()));
-        }
+        //string lockPath = Path.Combine(_dataDir, "locks", "partitions", $"{partition.Topic.Value}-{partition.Partition}.lock");
+        //if (_partitionLocks.ContainsKey(partition))
+        //{
+        //    return ValueTask.FromResult(new LeaseResult(true, node, new FencingToken(1), DateTimeOffset.UtcNow.Add(ttl).ToUnixTimeMilliseconds()));
+        //}
 
-        try
+        //try
+        //{
+        //    var fs = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        //    _partitionLocks[partition] = fs;
+        //    return ValueTask.FromResult(new LeaseResult(true, node, new FencingToken(1), DateTimeOffset.UtcNow.Add(ttl).ToUnixTimeMilliseconds()));
+        //}
+        //catch (IOException)
+        //{
+        //    return ValueTask.FromResult(new LeaseResult(false, new NodeId("other-process"), new FencingToken(0), 0));
+        //}
+
+        lock (_leaseSync)
         {
-            var fs = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-            _partitionLocks[partition] = fs;
-            return ValueTask.FromResult(new LeaseResult(true, node, new FencingToken(1), DateTimeOffset.UtcNow.Add(ttl).ToUnixTimeMilliseconds()));
-        }
-        catch (IOException)
-        {
-            return ValueTask.FromResult(new LeaseResult(false, new NodeId("other-process"), new FencingToken(0), 0));
+            if (_partitionLocks.ContainsKey(partition))
+            {
+                return ValueTask.FromResult(new LeaseResult(true, node, new FencingToken(1), DateTimeOffset.UtcNow.Add(ttl).ToUnixTimeMilliseconds()));
+            }
+
+            string lockPath = Path.Combine(_dataDir, "locks", "partitions", $"{partition.Topic.Value}-{partition.Partition}.lock");
+            try
+            {
+                var fs = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+                _partitionLocks[partition] = fs;
+                return ValueTask.FromResult(new LeaseResult(true, node, new FencingToken(1), DateTimeOffset.UtcNow.Add(ttl).ToUnixTimeMilliseconds()));
+            }
+            catch (IOException)
+            {
+                return ValueTask.FromResult(new LeaseResult(false, new NodeId("other-process"), new FencingToken(0), 0));
+            }
         }
     }
 

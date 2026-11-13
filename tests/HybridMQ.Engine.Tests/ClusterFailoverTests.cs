@@ -28,21 +28,23 @@ public sealed class ClusterFailoverTests
             await engineA.StartAsync();
             membershipA.RecordHeartbeat(nodeB, "127.0.0.1:5680");
 
-            var deadNodes = new List<NodeId>();
-            membershipA.OnPeerDied += n => deadNodes.Add(n);
+            // --- 여기부터 수정 ---
+            var deadSignal = new TaskCompletionSource<NodeId>(TaskCreationOptions.RunContinuationsAsynchronously);
+            membershipA.OnPeerDied += n => deadSignal.TrySetResult(n);
 
             // Advance clock past heartbeat timeout (5s)
             clock.Advance(TimeSpan.FromSeconds(6));
             membershipA.EvaluatePeerHealth();
 
-            deadNodes.Should().ContainSingle().Which.Should().Be(nodeB);
+            var deadNode = await deadSignal.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            deadNode.Should().Be(nodeB);
+            // --- 여기까지 수정 ---
         }
         finally
         {
             if (Directory.Exists(tempDir)) Directory.Delete(tempDir, recursive: true);
         }
     }
-
     [Fact]
     public async Task PartitionLeaseCoordinator_Acquires_And_Releases_Partition_Leadership()
     {
