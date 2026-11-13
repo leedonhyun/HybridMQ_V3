@@ -62,7 +62,7 @@ public sealed class HybridMqRuntimeHost : IAsyncDisposable
     private readonly CancellationTokenSource? _clusterCts;
     private readonly Task? _clusterGossipTask;
     private readonly TcpTransportChannel? _peerTransport;
-
+    private int _disposed; // 추가: 중복 Dispose 방지 플래그
     public BrokerEngine Engine { get; }
     public IHybridMqInstance Client { get; }
     public ClusterMembershipManager Membership { get; }
@@ -94,6 +94,9 @@ public sealed class HybridMqRuntimeHost : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
         if (_clusterCts is not null)
         {
             await _clusterCts.CancelAsync().ConfigureAwait(false);

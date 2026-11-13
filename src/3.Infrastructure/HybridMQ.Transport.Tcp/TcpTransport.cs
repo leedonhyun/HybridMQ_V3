@@ -240,15 +240,32 @@ public sealed class TcpBrokerServer : IAsyncDisposable
             writeLock.Dispose();
         }
     }
+    private int _disposed;
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
         await _cts.CancelAsync().ConfigureAwait(false);
+
         _listener.Stop();
         if (_acceptLoop is not null)
         {
             try { await _acceptLoop.ConfigureAwait(false); } catch { }
         }
+
+        // ... 기존 리스너 중지 및 태스크 대기 코드 ...
         _cts.Dispose();
     }
+    //public async ValueTask DisposeAsync()
+    //{
+    //    await _cts.CancelAsync().ConfigureAwait(false);
+    //    _listener.Stop();
+    //    if (_acceptLoop is not null)
+    //    {
+    //        try { await _acceptLoop.ConfigureAwait(false); } catch { }
+    //    }
+    //    _cts.Dispose();
+    //}
 }

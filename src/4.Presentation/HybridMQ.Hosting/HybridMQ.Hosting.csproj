@@ -11,5 +11,6 @@
     <ProjectReference Include="../../3.Infrastructure/HybridMQ.Storage.MongoDb/HybridMQ.Storage.MongoDb.csproj" />
     <ProjectReference Include="../../3.Infrastructure/HybridMQ.Transport.Local/HybridMQ.Transport.Local.csproj" />
     <ProjectReference Include="../../3.Infrastructure/HybridMQ.Transport.Tcp/HybridMQ.Transport.Tcp.csproj" />
+    <ProjectReference Include="..\..\3.Infrastructure\HybridMQ.Cluster\HybridMQ.Cluster.csproj" />
   </ItemGroup>
 </Project>
