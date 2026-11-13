@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>HybridMQ.Client</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../1.Domain/HybridMQ.Domain/HybridMQ.Domain.csproj" />
+    <ProjectReference Include="../HybridMQ.Engine/HybridMQ.Engine.csproj" />
+  </ItemGroup>
+</Project>

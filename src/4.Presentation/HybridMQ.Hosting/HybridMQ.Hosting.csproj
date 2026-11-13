@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>HybridMQ.Hosting</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../1.Domain/HybridMQ.Domain/HybridMQ.Domain.csproj" />
+    <ProjectReference Include="../../2.Application/HybridMQ.Engine/HybridMQ.Engine.csproj" />
+    <ProjectReference Include="../../2.Application/HybridMQ.Client/HybridMQ.Client.csproj" />
+    <ProjectReference Include="../../3.Infrastructure/HybridMQ.Cluster/HybridMQ.Cluster.csproj" />
+    <ProjectReference Include="../../3.Infrastructure/HybridMQ.Storage.File/HybridMQ.Storage.File.csproj" />
+    <ProjectReference Include="../../3.Infrastructure/HybridMQ.Storage.PostgreSql/HybridMQ.Storage.PostgreSql.csproj" />
+    <ProjectReference Include="../../3.Infrastructure/HybridMQ.Storage.MongoDb/HybridMQ.Storage.MongoDb.csproj" />
+    <ProjectReference Include="../../3.Infrastructure/HybridMQ.Transport.Local/HybridMQ.Transport.Local.csproj" />
+    <ProjectReference Include="../../3.Infrastructure/HybridMQ.Transport.Tcp/HybridMQ.Transport.Tcp.csproj" />
+  </ItemGroup>
+</Project>

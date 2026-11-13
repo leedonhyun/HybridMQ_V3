@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/1.Domain/HybridMQ.Domain/HybridMQ.Domain.csproj" />
+    <ProjectReference Include="../../src/2.Application/HybridMQ.Engine/HybridMQ.Engine.csproj" />
+    <ProjectReference Include="../../src/2.Application/HybridMQ.Client/HybridMQ.Client.csproj" />
+    <ProjectReference Include="../../src/3.Infrastructure/HybridMQ.Cluster/HybridMQ.Cluster.csproj" />
+    <ProjectReference Include="../../src/3.Infrastructure/HybridMQ.Storage.File/HybridMQ.Storage.File.csproj" />
+    <ProjectReference Include="../../src/3.Infrastructure/HybridMQ.Transport.Local/HybridMQ.Transport.Local.csproj" />
+    <ProjectReference Include="../../src/3.Infrastructure/HybridMQ.Transport.Tcp/HybridMQ.Transport.Tcp.csproj" />
+    <ProjectReference Include="../../src/4.Presentation/HybridMQ.Hosting/HybridMQ.Hosting.csproj" />
+  </ItemGroup>
+</Project>

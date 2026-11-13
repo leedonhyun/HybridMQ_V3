@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>HybridMQ.Transport.Tcp</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../1.Domain/HybridMQ.Domain/HybridMQ.Domain.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>HybridMQ.Samples.Console</RootNamespace>
+    <PublishAot>true</PublishAot>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/4.Presentation/HybridMQ.Hosting/HybridMQ.Hosting.csproj" />
+  </ItemGroup>
+</Project>
