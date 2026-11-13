@@ -124,8 +124,9 @@ public sealed class FileStorageProvider : IStorageProvider
                 currentOff++;
             }
 
-            using var fs = new FileStream(segPath, FileMode.Append, FileAccess.Write, FileShare.Read, 4096, useAsync: true);
+            using var fs = new FileStream(segPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite, 4096, useAsync: true);
             long startPos = fs.Position;
+            fs.Seek(0, SeekOrigin.End);
             await fs.WriteAsync(ms.GetBuffer().AsMemory(0, (int)ms.Length), ct).ConfigureAwait(false);
             if (durability >= Durability.DiskSync)
                 fs.Flush(true);
@@ -158,7 +159,8 @@ public sealed class FileStorageProvider : IStorageProvider
         string segPath = GetActiveSegmentPath(partition);
         if (!File.Exists(segPath)) yield break;
 
-        byte[] data = await File.ReadAllBytesAsync(segPath, ct).ConfigureAwait(false);
+        //byte[] data = await File.ReadAllBytesAsync(segPath, ct).ConfigureAwait(false);
+        byte[] data = await ReadAllBytesSharedAsync(segPath, ct).ConfigureAwait(false);
         int pos = await LookupIndexOffsetAsync(segPath, fromOffset.Value, ct).ConfigureAwait(false);
         int yielded = 0;
 
@@ -176,7 +178,21 @@ public sealed class FileStorageProvider : IStorageProvider
             }
         }
     }
+    // 2. 클래스 하단(닫는 중괄호 '}' 바로 위)에 헬퍼 메서드 추가
+    private static async ValueTask<byte[]> ReadAllBytesSharedAsync(string path, CancellationToken ct)
+    {
+        await using var fs = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.ReadWrite, // 쓰기 핸들과 동시 접근 허용
+            bufferSize: 4096,
+            useAsync: true);
 
+        var buffer = new byte[fs.Length];
+        await fs.ReadExactlyAsync(buffer, ct).ConfigureAwait(false);
+        return buffer;
+    }
     private static async ValueTask<int> LookupIndexOffsetAsync(string segPath, long targetOffset, CancellationToken ct)
     {
         if (targetOffset <= 0) return 0;

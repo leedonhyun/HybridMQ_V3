@@ -1,0 +1,39 @@
+@Host = http://localhost:9442
+
+### 1. 일반 주문 발행
+POST {{Host}}/api/orders
+Content-Type: application/json
+
+{
+  "customerId": "CUST-100",
+  "itemName": "Mechanical Keyboard",
+  "quantity": 1,
+  "delaySeconds": 0
+}
+
+### 2. 지연 주문 발행 (5초 뒤 컨슈머 전달)
+POST {{Host}}/api/orders
+Content-Type: application/json
+
+{
+  "customerId": "CUST-100",
+  "itemName": "USB-C Cable",
+  "quantity": 2,
+  "delaySeconds": 5
+}
+
+### 3. DLQ 이동 테스트용 실패 주문 발행 (3회 재시도 후 DLQ 격리)
+POST {{Host}}/api/orders
+Content-Type: application/json
+
+{
+  "customerId": "CUST-999",
+  "itemName": "FAIL_TEST",
+  "quantity": 1
+}
+
+### 4. 토픽 전체 스트림 조회 (Offset 0부터)
+GET {{Host}}/api/orders/stream?fromOffset=0&limit=50
+
+### 5. DLQ(Dead Letter Queue) 적재 메시지 조회
+GET {{Host}}/api/orders/dlq?limit=50

@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
     <RootNamespace>HybridMQ.Samples.WebApi</RootNamespace>
-    <PublishAot>true</PublishAot>
+    <PublishAot>false</PublishAot>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/4.Presentation/HybridMQ.Hosting/HybridMQ.Hosting.csproj" />

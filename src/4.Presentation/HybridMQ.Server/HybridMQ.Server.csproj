@@ -2,7 +2,7 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>HybridMQ.Server</RootNamespace>
-    <PublishAot>true</PublishAot>
+    <PublishAot>false</PublishAot>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../HybridMQ.Hosting/HybridMQ.Hosting.csproj" />

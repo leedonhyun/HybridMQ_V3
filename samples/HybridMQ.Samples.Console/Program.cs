@@ -1,20 +1,21 @@
+using System.Net;
 using System.Text;
 using System.Text.Json.Serialization;
+
 using HybridMQ.Client.Abstractions;
-using HybridMQ.Domain.Cluster;
 using HybridMQ.Domain.Primitives;
 using HybridMQ.Domain.Routing;
 using HybridMQ.Hosting;
 
 Console.WriteLine("=== HybridMQ Console Client Interactive & Scenario Demo ===");
 
-string dataDir = Path.Combine(Path.GetTempPath(), $"hybridmq_console_demo_{Guid.NewGuid():N}");
+// 1. 실행 중인 HybridMQ.Server의 주소와 포트 입력 (5679)
+var serverEndPoint = new IPEndPoint(IPAddress.Loopback, 5679);
 
-await using var mq = await HybridMqFactory.CreateEmbeddedAsync(opts =>
-{
-    opts.DataDirectory = dataDir;
-    opts.Profile = ResourceProfile.Low; // 32MB 경량 프로파일
-});
+// 2. Embedded 대신 원격 TCP 브로커로 연결
+await using var mq = HybridMqFactory.ConnectRemoteTcp(
+    remoteEndPoint: serverEndPoint,
+    targetNodeId: new NodeId("broker-primary"));
 
 // 1. 토픽 및 Exchange 바인딩 구성
 await mq.Admin.CreateTopicAsync("orders.created", partitions: 2);
@@ -24,36 +25,52 @@ await mq.Admin.AddBindingAsync("commerce.events", ExchangeType.Direct, "order.cr
 
 Console.WriteLine("[1] Topics & Topic/Direct Exchange bindings configured.");
 
-// 2. Push 방식 WorkQueue 구독자 시작 (NativeAOT JsonSerializerContext 사용)
+// 2. Push 방식 WorkQueue 구독자 시작 (Partition 0 & 1 모두 구독)
 var receivedCount = 0;
 var allReceivedTcs = new TaskCompletionSource();
 
-await using var subscription = await mq.Consumer.SubscribeAsync(
+Func<IMessageContext, OrderDto, ValueTask> orderHandler = async (ctx, order) =>
+{
+    Console.WriteLine($"  -> [Consumer P{ctx.Partition}] Offset={ctx.Offset} | Order={order.OrderId} | Customer={order.CustomerId} | Amount={order.Amount:N0} KRW");
+
+    if (order.SimulateTransientError && Interlocked.Increment(ref order.AttemptCounter) == 1)
+    {
+        Console.WriteLine($"  !! [Consumer] Transient error on {order.OrderId}, triggering Nack/Retry...");
+        await ctx.NackAsync(reason: "SimulatedPaymentGatewayTimeout");
+        return;
+    }
+
+    await ctx.AckAsync();
+    if (Interlocked.Increment(ref receivedCount) >= 3)
+        allReceivedTcs.TrySetResult();
+};
+
+await using var sub0 = await mq.Consumer.SubscribeAsync(
     topic: "orders.created",
     group: "payment-worker-group",
     options: new SubscribeOptions
     {
         PrefetchCount = 10,
         AckTimeout = TimeSpan.FromSeconds(15),
-        OrderedByKey = true, // 동일 CustomerId 기준 순차 처리 보장
+        OrderedByKey = true,
         MaxAttempts = 3,
         Partition = 0
     },
-    handler: async (ctx, order) =>
+    handler: orderHandler,
+    typeInfo: SampleJsonContext.Default.OrderDto);
+
+await using var sub1 = await mq.Consumer.SubscribeAsync(
+    topic: "orders.created",
+    group: "payment-worker-group",
+    options: new SubscribeOptions
     {
-        Console.WriteLine($"  -> [Consumer] Offset={ctx.Offset} | Order={order.OrderId} | Customer={order.CustomerId} | Amount={order.Amount:N0} KRW");
-
-        if (order.SimulateTransientError && Interlocked.Increment(ref order.AttemptCounter) == 1)
-        {
-            Console.WriteLine($"  !! [Consumer] Transient error on {order.OrderId}, triggering Nack/Retry...");
-            await ctx.NackAsync(reason: "SimulatedPaymentGatewayTimeout");
-            return;
-        }
-
-        await ctx.AckAsync();
-        if (Interlocked.Increment(ref receivedCount) >= 3)
-            allReceivedTcs.TrySetResult();
+        PrefetchCount = 10,
+        AckTimeout = TimeSpan.FromSeconds(15),
+        OrderedByKey = true,
+        MaxAttempts = 3,
+        Partition = 1
     },
+    handler: orderHandler,
     typeInfo: SampleJsonContext.Default.OrderDto);
 
 // 3. 메시지 발행 (Exchange 라우팅 + 지연 메시지 포함)
@@ -94,9 +111,6 @@ await foreach (var record in mq.Consumer.ReadStreamAsync("audit.logs", partition
 }
 
 Console.WriteLine("=== Demo Completed Successfully ===");
-
-if (Directory.Exists(dataDir))
-    Directory.Delete(dataDir, recursive: true);
 
 public sealed record OrderDto(string OrderId, string CustomerId, decimal Amount, bool SimulateTransientError = false)
 {

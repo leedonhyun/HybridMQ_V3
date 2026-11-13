@@ -1,31 +1,39 @@
+using System.Net;
 using System.Text.Json.Serialization;
+
 using HybridMQ.Client.Abstractions;
-using HybridMQ.Domain.Cluster;
 using HybridMQ.Domain.Primitives;
 using HybridMQ.Hosting;
 
-var builder = WebApplication.CreateSlimBuilder(args);
+// 1. CreateSlimBuilder 대신 표준 CreateBuilder 사용 (HTTPS 자동 지원 및 일반 JSON 직렬화 허용)
+var builder = WebApplication.CreateBuilder(args);
 
-// NativeAOT 호환 JSON 직렬화 컨텍스트 등록
+// JSON 직렬화 컨텍스트 등록
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.TypeInfoResolverChain.Insert(0, WebApiJsonContext.Default);
 });
 
-// HybridMQ 내장 브로커 DI 등록
-builder.Services.AddHybridMq(opts =>
-{
-    opts.DataDirectory = builder.Configuration["HybridMQ:DataDirectory"] ?? "./data/webapi-mq";
-    opts.Profile = ResourceProfile.Standard;
-    opts.OverrideMaxMemoryMb = 128;
-});
+// 2. 내장 브로커(AddHybridMq) 대신 실행 중인 HybridMQ.Server(TCP 5679) 원격 연결 등록
+var serverEndPoint = new IPEndPoint(IPAddress.Loopback, 5679);
+var remoteMq = HybridMqFactory.ConnectRemoteTcp(
+    remoteEndPoint: serverEndPoint,
+    targetNodeId: new NodeId("broker-primary"));
+
+builder.Services.AddSingleton(remoteMq);
+builder.Services.AddSingleton(remoteMq.Producer);
+builder.Services.AddSingleton(remoteMq.Consumer);
+builder.Services.AddSingleton(remoteMq.Admin);
 
 // 백그라운드 컨슈머 워커 등록
 builder.Services.AddHostedService<OrderProcessingWorker>();
 
 var app = builder.Build();
 
-// 앱 시작 시 기본 토픽 생성
+// 앱 종료 시 원격 TCP 연결 해제
+app.Lifetime.ApplicationStopping.Register(() => remoteMq.DisposeAsync().AsTask().GetAwaiter().GetResult());
+
+// 앱 시작 시 기본 토픽 생성 (원격 HybridMQ.Server에 생성됨)
 var admin = app.Services.GetRequiredService<IAdminClient>();
 await admin.CreateTopicAsync("web-orders", partitions: 1);
 
@@ -92,7 +100,8 @@ public sealed class OrderProcessingWorker(IConsumer consumer, ILogger<OrderProce
                 PrefetchCount = 16,
                 AckTimeout = TimeSpan.FromSeconds(30),
                 OrderedByKey = true,
-                MaxAttempts = 3
+                MaxAttempts = 3,
+                Partition = 0
             },
             handler: async (ctx, order) =>
             {
