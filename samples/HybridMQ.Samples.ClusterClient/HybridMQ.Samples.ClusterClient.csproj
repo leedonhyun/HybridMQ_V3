@@ -1,0 +1,16 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net11.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\1.Domain\HybridMQ.Domain\HybridMQ.Domain.csproj" />
+    <ProjectReference Include="..\..\src\2.Application\HybridMQ.Client\HybridMQ.Client.csproj" />
+    <ProjectReference Include="..\..\src\2.Application\HybridMQ.Engine\HybridMQ.Engine.csproj" />
+  </ItemGroup>
+
+</Project>

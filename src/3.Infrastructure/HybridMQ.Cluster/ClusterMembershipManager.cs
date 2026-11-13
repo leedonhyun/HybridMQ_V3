@@ -1,9 +1,10 @@
 namespace HybridMQ.Cluster;
 
-using System.Collections.Concurrent;
-
 using HybridMQ.Domain.Ports;
 using HybridMQ.Domain.Primitives;
+
+using System.Collections.Concurrent;
+using System.Net;
 
 public sealed record PeerNodeInfo(
     NodeId NodeId,
@@ -146,4 +147,5 @@ public sealed class ClusterMembershipManager : IPeerMembershipProvider
         }
         _cts.Dispose();
     }
+
 }

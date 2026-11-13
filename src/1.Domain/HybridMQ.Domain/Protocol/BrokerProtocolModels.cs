@@ -1,6 +1,9 @@
 namespace HybridMQ.Domain.Protocol;
 
+using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
+
 using HybridMQ.Domain.Messaging;
 using HybridMQ.Domain.Routing;
 using HybridMQ.Domain.Topics;
